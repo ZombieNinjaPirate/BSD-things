@@ -1,0 +1,242 @@
+#
+#   Copyright (c) 2014, Are Hansen - Honeypot Development.
+# 
+#   All rights reserved.
+# 
+#   Redistribution and use in source and binary forms, with or without modification, are
+#   permitted provided that the following conditions are met:
+#
+#   1. Redistributions of source code must retain the above copyright notice, this list
+#   of conditions and the following disclaimer.
+# 
+#   2. Redistributions in binary form must reproduce the above copyright notice, this
+#   list of conditions and the following disclaimer in the documentation and/or other
+#   materials provided with the distribution.
+# 
+#   THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND AN
+#   EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
+#   OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT
+#   SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT,
+#   INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED
+#   TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR
+#   BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN 
+#   CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY 
+#   WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+#
+#
+
+#[============================================[ Network variables ]===========================================]
+# - Loopback interface
+LOO_IF = "lo0"
+
+# - External interface
+EXT_IF = "nfe0"
+
+# - Internal interface
+LAN_IF = "re1"
+
+# - All interfaces
+ALL_IF = "{ nfe0, re1 }"
+
+# - Internal subnet
+LAN = "10.128.64.0/18"
+
+# - LAN gateways IP address
+LAN_GW = "10.13.192.1"
+
+# - SSH server
+HONEY1 = "10.13.255.200"
+
+# - The port number of the Bifrozt sshd.
+SSH = "50332"
+
+#[===========================================[ Rule Substitutions ]===========================================]
+P15 = "probability 75%"
+P75 = "probability 25%"
+PIO = "pass in on"
+POO = "pass out on"
+PIQO = "pass in log (all) quick on"
+BIQO = "block in quick on"
+IPRO  = "inet proto"
+MODST = "modulate state"
+PILAO = "pass in log (all) on"
+ALL_PROT = "{ tcp, udp, icmp }"
+
+#[] ===================================== About DATA_CONTROL ============================================== []
+DATA_CONTROL = "(max-src-conn 4, max-src-conn-rate 2/1, overload <ddos_trolls> flush)"
+CALM_DOWN = "(max-src-conn 2, max-src-conn-rate 1/1, overload <level2> flush)"
+
+#[]########################################################################################################[]#
+
+
+
+#[][ RULE ORDER: 2 ]=================================================================================[ TABLES ]
+# - This table is populated by hosts that exceeds the DATA_CONTROL limits
+table <ddos_trolls> persist
+
+# - This table is populated by hosts that exceeds the CALM_DOWN limits
+table <level2> persist
+
+# - Comma separated table containing ALL hosts that the honeypots will be blocked from accessing.
+table <black_list> const { 10.13.199.254 }
+
+# - Comma separated table containing ALL honeypot addresses
+table <honeypot> const { 10.13.255.200 }
+#[]########################################################################################################[]#
+
+
+
+#[][ RULE ORDER: 3 ]================================================================================[ OPTIONS ]
+set skip on $LOO_IF
+set debug urgent
+set block-policy drop
+set loginterface $LAN_IF
+set state-policy if-bound
+set optimization aggressive
+set ruleset-optimization profile
+set fingerprints "/etc/pf.os"
+#[]########################################################################################################[]#
+
+
+
+#[][ RULE ORDER: 4 ]=================================================================================[ SCRUB ]
+antispoof for $ALL_IF label "Anit spoofing"
+match in  on  $ALL_IF all scrub (random-id) label "Scrub inbound packets"
+match out on  $ALL_IF all scrub (random-id) label "Scrub outbound packets"
+#[]########################################################################################################[]#
+
+
+
+#[][ RULE ORDER: 5 ]==============================================================================[ QUEUEING ]
+altq on re1 bandwidth 100Mb hfsc queue { std, web, mail, oth, dns, irc, lvl2, ddos }
+     queue std bandwidth 10% priority 6 qlimit 500 hfsc (default)
+
+     queue web bandwidth 10% priority 3 qlimit 500 hfsc (realtime 2%) { http, https }
+           queue http  bandwidth 40% priority 3 qlimit 500 hfsc (realtime  10%)
+           queue https bandwidth 40% priority 3 qlimit 500 hfsc (realtime  10%)
+
+     queue mail bandwidth 2% priority 7 qlimit 500 hfsc (realtime 5%) { smtp, popv2, popv3, imap, imaps, pop3s }
+           queue smtp  bandwidth 5% priority 7 qlimit 500 hfsc (realtime 10%)
+           queue popv2 bandwidth 5% priority 7 qlimit 500 hfsc (realtime 10%)
+           queue popv3 bandwidth 5% priority 7 qlimit 500 hfsc (realtime 10%)
+           queue imap  bandwidth 5% priority 7 qlimit 500 hfsc (realtime 10%)
+           queue imaps bandwidth 5% priority 7 qlimit 500 hfsc (realtime 10%)
+           queue pop3s bandwidth 5% priority 7 qlimit 500 hfsc (realtime 10%)
+
+     queue oth bandwidth 30% priority 2 qlimit 500 hfsc (realtime 10%) { ftp, ssh, telnet, smb, afp, mssql, mysql }
+           queue ftp    bandwidth  5% priority 2 qlimit 500 hfsc (realtime 10%)
+           queue ssh    bandwidth  1% priority 2 qlimit 500 hfsc (realtime 10%)
+           queue telnet bandwidth  5% priority 2 qlimit 500 hfsc (realtime 10%)
+           queue smb    bandwidth 1Kb priority 2 qlimit 500 hfsc (realtime 10%)
+           queue afp    bandwidth 1Kb priority 2 qlimit 500 hfsc (realtime 10%)
+           queue mssql  bandwidth 1Kb priority 2 qlimit 500 hfsc (realtime 10%)
+           queue mysql  bandwidth 1Kb priority 2 qlimit 500 hfsc (realtime 10%)
+
+     queue dns  bandwidth   5% priority 2 qlimit 500 hfsc (realtime 5%)
+     queue irc  bandwidth  30% priority 7 qlimit 500 hfsc (realtime 5%)
+     queue lvl2 bandwidth  5Kb priority 9 qlimit 500 hfsc (realtime 1%)
+     queue ddos bandwidth 50Kb priority 9 qlimit 500 hfsc (realtime 1%)
+#[]#########################################################################################################[]#
+
+
+
+#[][ RULE ORDER: 6 ]====================================================================================[ NAT ]
+match out on $LAN_IF inet from any to any nat-to ($LAN_IF:0) label "WAN <=> LAN"
+match out on $EXT_IF inet from any to any nat-to ($EXT_IF:0) label "WAN <=> ALL"
+#[]#########################################################################################################[]#
+
+
+
+#[][ RULE ORDER: 7 ]===========================================================================[ FILTER RULES ]
+# - Block all IPv6 packets
+block quick inet6 label "Block IPv6"
+
+# - Block all packets from <honeypot> to host on the blacklist
+$BIQO $LAN_IF from <honeypot> to <black_list> label "<honeypot> !=> <black_list>"
+
+# - Block packets going to tcp/22 on LAN_GW from <honeypot>
+$BIQO $LAN_IF $IPRO tcp from <honeypot> to $LAN_GW port 22 label "<honeypot> !=> LAN_GW:SSH"
+
+# - Default block all rule
+block on $ALL_IF all label "Default block all"
+
+#[============================================[ Allow rules ]================================================]
+# - Outging traffic from the host on the external interface.
+$POO $EXT_IF $IPRO $ALL_PROT from ($EXT_IF) $MODST label "EXT_IF <=> WAN"
+
+# - Inbound attacks thats itercepted by HonSSH
+$PIO $EXT_IF $IPRO tcp to port   22 $MODST label "WAN:HonSSH => EXT_IF"
+
+# - Inbound connection from admin to Bifrozt.
+$PIO $EXT_IF $IPRO tcp to port $SSH $MODST label "SSH => EXT_IF"
+
+# - Pass traffic out from HonSSH on internal interface to the primary honeypot.
+$POO $LAN_IF $IPRO tcp to $HONEY1 port 22 $MODST label "LAN_IF:HonSSH => HONEY1"
+
+# - Will randomly drop 15% of all packets for anyone in <ddos_trolls> for the next 15 min.
+$PIQO $LAN_IF $IPRO tcp  from <ddos_trolls> to port     20:21 $MODST $CALM_DOWN $P15 label "<ddos_trolls> => FTP"    queue (ddos)
+$PIQO $LAN_IF $IPRO tcp  from <ddos_trolls> to port        22 $MODST $CALM_DOWN $P15 label "<ddos_trolls> => SSH"    queue (ddos)
+$PIQO $LAN_IF $IPRO tcp  from <ddos_trolls> to port        23 $MODST $CALM_DOWN $P15 label "<ddos_trolls> => TELNET" queue (ddos)
+$PIQO $LAN_IF $IPRO tcp  from <ddos_trolls> to port        25 $MODST $CALM_DOWN $P15 label "<ddos_trolls> => SMTP"   queue (ddos)
+$PIQO $LAN_IF $IPRO udp  from <ddos_trolls> to port        53 $MODST $CALM_DOWN $P15 label "<ddos_trolls> => DNS"    queue (ddos)
+$PIQO $LAN_IF $IPRO tcp  from <ddos_trolls> to port        80 $MODST $CALM_DOWN $P15 label "<ddos_trolls> => HTTP"   queue (ddos)
+$PIQO $LAN_IF $IPRO tcp  from <ddos_trolls> to port       109 $MODST $CALM_DOWN $P15 label "<ddos_trolls> => POPv2"  queue (ddos)
+$PIQO $LAN_IF $IPRO tcp  from <ddos_trolls> to port       110 $MODST $CALM_DOWN $P15 label "<ddos_trolls> => POPv3"  queue (ddos)
+$PIQO $LAN_IF $IPRO tcp  from <ddos_trolls> to port       143 $MODST $CALM_DOWN $P15 label "<ddos_trolls> => IMAP"   queue (ddos)
+$PIQO $LAN_IF $IPRO tcp  from <ddos_trolls> to port       443 $MODST $CALM_DOWN $P15 label "<ddos_trolls> => HTTPS"  queue (ddos)
+$PIQO $LAN_IF $IPRO tcp  from <ddos_trolls> to port       445 $MODST $CALM_DOWN $P15 label "<ddos_trolls> => SMB"    queue (ddos)
+$PIQO $LAN_IF $IPRO tcp  from <ddos_trolls> to port       548 $MODST $CALM_DOWN $P15 label "<ddos_trolls> => AFP"    queue (ddos)
+$PIQO $LAN_IF $IPRO tcp  from <ddos_trolls> to port       993 $MODST $CALM_DOWN $P15 label "<ddos_trolls> => IMAP"   queue (ddos)
+$PIQO $LAN_IF $IPRO tcp  from <ddos_trolls> to port       995 $MODST $CALM_DOWN $P15 label "<ddos_trolls> => POP3S"  queue (ddos)
+$PIQO $LAN_IF $IPRO tcp  from <ddos_trolls> to port      1433 $MODST $CALM_DOWN $P15 label "<ddos_trolls> => MSSQL"  queue (ddos)
+$PIQO $LAN_IF $IPRO tcp  from <ddos_trolls> to port      3306 $MODST $CALM_DOWN $P15 label "<ddos_trolls> => MYSQL"  queue (ddos)
+$PIQO $LAN_IF $IPRO tcp  from <ddos_trolls> to port 6660:6699 $MODST $CALM_DOWN $P15 label "<ddos_trolls> => IRC"    queue (ddos)
+$PIQO $LAN_IF $IPRO tcp  from <ddos_trolls> to port 8080:8999 $MODST $CALM_DOWN $P15 label "<ddos_trolls> => AHTTP"  queue (ddos)
+$PIQO $LAN_IF $IPRO icmp from <ddos_trolls>                                     $P15 label "<ddos_trolls> ICMP"      queue (ddos) 
+
+# - Will randomly drop 75% of all packets for anyone in <level2> for the next 30 min.
+$PIQO $LAN_IF $IPRO tcp  from <level2> to port     20:21 $MODST $P75 label "<level2> => FTP"    queue (lvl2)
+$PIQO $LAN_IF $IPRO tcp  from <level2> to port        22 $MODST $P75 label "<level2> => SSH"    queue (lvl2)
+$PIQO $LAN_IF $IPRO tcp  from <level2> to port        23 $MODST $P75 label "<level2> => TELNET" queue (lvl2)
+$PIQO $LAN_IF $IPRO tcp  from <level2> to port        25 $MODST $P75 label "<level2> => SMTP"   queue (lvl2)
+$PIQO $LAN_IF $IPRO udp  from <level2> to port        53 $MODST $P75 label "<level2> => DNS"    queue (lvl2)
+$PIQO $LAN_IF $IPRO tcp  from <level2> to port        80 $MODST $P75 label "<level2> => HTTP"   queue (lvl2)
+$PIQO $LAN_IF $IPRO tcp  from <level2> to port       109 $MODST $P75 label "<level2> => POPv2"  queue (lvl2)
+$PIQO $LAN_IF $IPRO tcp  from <level2> to port       110 $MODST $P75 label "<level2> => POPv3"  queue (lvl2)
+$PIQO $LAN_IF $IPRO tcp  from <level2> to port       143 $MODST $P75 label "<level2> => IMAP"   queue (lvl2)
+$PIQO $LAN_IF $IPRO tcp  from <level2> to port       443 $MODST $P75 label "<level2> => HTTPS"  queue (lvl2)
+$PIQO $LAN_IF $IPRO tcp  from <level2> to port       445 $MODST $P75 label "<level2> => SMB"    queue (lvl2)
+$PIQO $LAN_IF $IPRO tcp  from <level2> to port       548 $MODST $P75 label "<level2> => AFP"    queue (lvl2)
+$PIQO $LAN_IF $IPRO tcp  from <level2> to port       993 $MODST $P75 label "<level2> => IMAP"   queue (lvl2)
+$PIQO $LAN_IF $IPRO tcp  from <level2> to port       995 $MODST $P75 label "<level2> => POP3S"  queue (lvl2)
+$PIQO $LAN_IF $IPRO tcp  from <level2> to port      1433 $MODST $P75 label "<level2> => MSSQL"  queue (lvl2)
+$PIQO $LAN_IF $IPRO tcp  from <level2> to port      3306 $MODST $P75 label "<level2> => MYSQL"  queue (lvl2)
+$PIQO $LAN_IF $IPRO tcp  from <level2> to port 6660:6699 $MODST $P75 label "<level2> => IRC"    queue (lvl2)
+$PIQO $LAN_IF $IPRO tcp  from <level2> to port 8080:8999 $MODST $P75 label "<level2> => AHTTP"  queue (lvl2)
+$PIQO $LAN_IF $IPRO icmp from <level2>                          $P75 label "<level2> ICMP"      queue (lvl2) 
+
+# - Pass traffic in on the internal interface, but only to the ports in this list
+$PILAO $LAN_IF $IPRO tcp to port     20:21 $MODST $DATA_CONTROL label "<honeypot> => FTP"    queue (ftp)
+$PILAO $LAN_IF $IPRO tcp to port        22 $MODST $DATA_CONTROL label "<honeypot> => SSH"    queue (ssh)
+$PILAO $LAN_IF $IPRO tcp to port        23 $MODST $DATA_CONTROL label "<honeypot> => TELNET" queue (telnet)
+$PILAO $LAN_IF $IPRO tcp to port        25 $MODST $DATA_CONTROL label "<honeypot> => SMTP"   queue (smtp)
+$PILAO $LAN_IF $IPRO udp to port        53 $MODST $DATA_CONTROL label "<honeypot> => DNS"    queue (dns)
+$PILAO $LAN_IF $IPRO tcp to port        80 $MODST $DATA_CONTROL label "<honeypot> => HTTP"   queue (http, dns)
+$PILAO $LAN_IF $IPRO tcp to port       109 $MODST $DATA_CONTROL label "<honeypot> => POPv2"  queue (popv2)
+$PILAO $LAN_IF $IPRO tcp to port       110 $MODST $DATA_CONTROL label "<honeypot> => POPv3"  queue (popv3)
+$PILAO $LAN_IF $IPRO tcp to port       143 $MODST $DATA_CONTROL label "<honeypot> => IMAP"   queue (imap)
+$PILAO $LAN_IF $IPRO tcp to port       443 $MODST $DATA_CONTROL label "<honeypot> => HTTPS"  queue (https, dns)
+$PILAO $LAN_IF $IPRO tcp to port       445 $MODST $DATA_CONTROL label "<honeypot> => SMB"    queue (smb, dns)
+$PILAO $LAN_IF $IPRO tcp to port       548 $MODST $DATA_CONTROL label "<honeypot> => AFP"    queue (afp, dns)
+$PILAO $LAN_IF $IPRO tcp to port       587 $MODST $DATA_CONTROL label "<honeypot> => IMAP"   queue (smtp, dns)
+$PILAO $LAN_IF $IPRO tcp to port       993 $MODST $DATA_CONTROL label "<honeypot> => IMAPS"  queue (imaps, dns)
+$PILAO $LAN_IF $IPRO tcp to port       995 $MODST $DATA_CONTROL label "<honeypot> => POP3S"  queue (pop3s, dns)
+$PILAO $LAN_IF $IPRO tcp to port      1433 $MODST $DATA_CONTROL label "<honeypot> => MSSQL"  queue (mssql, dns)
+$PILAO $LAN_IF $IPRO tcp to port      3306 $MODST $DATA_CONTROL label "<honeypot> => MYSQL"  queue (mysql, dns)
+$PILAO $LAN_IF $IPRO tcp to port 6660:6669 $MODST $DATA_CONTROL label "<honeypot> => IRC"    queue (irc, dns)
+$PILAO $LAN_IF $IPRO tcp to port 8080:8999 $MODST $DATA_CONTROL label "<honeypot> => AHTTP"  queue (http, dns)
+
+# - ...and we let them play with some ICMP...
+pass on $ALL_IF $IPRO icmp icmp-type echoreq label "ICMP"
+
+#[]#########################################################################################################[]#
